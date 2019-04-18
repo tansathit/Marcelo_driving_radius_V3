@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml">
+
+  <head>
+<meta http-equiv="content-type" content="text/html; charset=iso-8859-1"/>
+    <title>Google Maps - Marcelo's Drive Time Polygon Example ported to v3</title>
+<style>
+html, body, #mapDiv {
+    height: 100%;
+    width: 100%;
+    margin: 0px;
+    padding: 0px
+}
+</style>
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCxitB5jQcw7weQdg9MqBRfxr6mj81wT7I&libraries=geometry" type="text/javascript"></script>
+<script type="text/javascript">
+//<![CDATA[
+var map;
+var container;
+var zoom = 9;
+var centerPoint = new google.maps.LatLng(35.149534,-90.04898);
+var dirService = new google.maps.DirectionsService();
+var centerMarker;
+var circleMarkers = Array();
+var circlePoints = Array();
+var drivePolyPoints = Array();
+var searchPolygon, drivePolygon;
+var distToDrive = 30; // miles
+var pointInterval = 30;
+var searchPoints = [];
+var polyline;
+var polylines = [];
+var redIcon8 = "https://maps.gstatic.com/intl/en_us/mapfiles/markers2/measle.png";
+
+function initialize() {
+    map = new google.maps.Map(
+    document.getElementById("mapDiv"), {
+        center: centerPoint,
+        zoom: 9,
+        mapTypeId: google.maps.MapTypeId.ROADMAP
+    });
+    google.maps.event.addListener(map, "click", mapClick);
+}
+google.maps.event.addDomListener(window, "load", initialize);
+function mapClick(evt) {
+  // map.clearOverlays();
+  circleMarkers = Array();
+  if (!centerMarker) {
+    centerMarker = new google.maps.Marker({
+      position: evt.latLng,
+      map: map
+      });
+  } else {
+    centerMarker.setMap(null);
+    centerMarker.setPosition(evt.latLng);
+  }
+  centerMarker.setMap(map);
+  searchPoints = getCirclePoints(evt.latLng, distToDrive);
+  drivePolyPoints = Array();
+  getDirections();
+}
+function getCirclePoints(center, radius) {
+  var bounds = new google.maps.LatLngBounds();
+  var circlePoints = Array();
+  var searchPoints = Array();
+  with(Math) {
+    var rLat = (radius / 3963.189) * (180 / PI); // miles
+    var rLng = rLat / cos(center.lat() * (PI / 180));
+    for (var a = 0; a < 361; a++) {
+      var aRad = a * (PI / 180);
+      var x = center.lng() + (rLng * cos(aRad));
+      var y = center.lat() + (rLat * sin(aRad));
+      var point = new google.maps.LatLng(parseFloat(y), parseFloat(x), true);
+      bounds.extend(point);
+      circlePoints.push(point);
+      if (a % pointInterval == 0) {
+        searchPoints.push(point);
+      }
+    }
+  }
+  searchPolygon = new google.maps.Polygon({
+    paths: circlePoints, 
+    strokeColor: '#0000ff', 
+    strokeWeight: 1, 
+    strokeOpacity: 1, 
+    fillColor:'#0000ff', 
+    fillOpacity: 0.2
+  });
+  searchPolygon.setMap(map);
+  map.fitBounds(bounds);
+  return searchPoints;
+}
+function getDirections() {
+  if (!searchPoints.length) {
+    return;
+  }
+  var to = searchPoints.shift();
+  var request = {
+  origin: centerMarker.getPosition(),
+  destination: to,
+  travelMode: google.maps.TravelMode.DRIVING
+  };
+  console.log("dirRqst from:"+centerMarker.getPosition().toUrlValue(6)+" to pt["+searchPoints.length+"]:"+to.toUrlValue(6));
+  document.getElementById('status').innerHTML = "dirRqst from:"+centerMarker.getPosition().toUrlValue(6)+" to pt["+searchPoints.length+"]:"+to.toUrlValue(6);
+  dirService.route(request, function(result, status) {
+  if (status == google.maps.DirectionsStatus.OK) {
+    var distance = parseInt(result.routes[0].legs[0].distance.value / 1609);
+    var duration = parseFloat(result.routes[0].legs[0].duration.value / 3600);
+    console.log("dist:"+distance.toFixed(2)+" dur:"+duration.toFixed(2)+" hrs");
+    var path = result.routes[0].overview_path;
+    var legs = result.routes[0].legs;
+    if (polyline && polyline.setPath) {
+      polyline.setPath([]);
+    } else {
+      polyline = new google.maps.Polyline({
+        path: [],
+        // map: map,
+        strokeColor: "#FF0000",
+        strokeOpacity: 1
+      });
+    } 
+    for (i = 0; i < legs.length; i++) {
+      var steps = legs[i].steps;
+      for (j = 0; j < steps.length; j++) {
+        var nextSegment = steps[j].path;
+        for (k = 0; k < nextSegment.length; k++) {
+          polyline.getPath().push(nextSegment[k]);
+          // bounds.extend(nextSegment[k]);
+        } 
+      }
+    }
+    // polyline.setMap(map);
+    shortenAndShow(polyline);
+    getDirections();
+    } else {
+      console.log("Directions request failed, status="+status+" [from:"+request.origin+" to:"+request.destination+"]");
+      document.getElementById('status').innerHTML = "Directions request failed, status="+status+" [from:"+request.origin+" to:"+request.destination+"]";
+      setTimeout(function() {getDirections()}, 5000);
+    }
+  });
+}
+function shortenAndShow(polyline) {
+  var distToDriveM = distToDrive * 1609;
+  var dist = 0;
+  var cutoffIndex = 0;
+  var copyPoints = Array();
+  for (var n = 0; n < polyline.getPath().getLength() - 1; n++) {
+    dist += google.maps.geometry.spherical.computeDistanceBetween(polyline.getPath().getAt(n),polyline.getPath().getAt(n + 1));
+    // console.log(dist + ' - ' + distToDriveM);
+    if (dist < distToDriveM) {
+      copyPoints.push(polyline.getPath().getAt(n));
+    } else {
+      break;
+    }
+  }
+  var lastPoint = copyPoints[copyPoints.length - 1];
+  var newLine = new google.maps.Polyline({
+    path:copyPoints, 
+    strokeColor: '#ff0000', 
+    strokeWeight: 2, 
+    strokeOpacity: 1
+  });
+  newLine.setMap(map);
+  polylines.push(newLine);
+  drivePolyPoints.push(lastPoint);
+  addBorderMarker(lastPoint, dist)
+  if (drivePolyPoints.length > 3) {
+    if (drivePolygon) {
+      drivePolygon.setMap(null);
+    }
+    drivePolygon = new google.maps.Polygon({
+      paths: drivePolyPoints, 
+      strokeColor: '#00ff00', 
+      strokeWeight: 1, 
+      strokeOpacity: 1, 
+      fillColor: '#00ff00', 
+      fillOpacity: 0.4
+    });
+    drivePolygon.setMap(map);
+  }
+}
+function addBorderMarker(pt, d) {
+  var str = pt.lat().toFixed(6) + ',' + pt.lng().toFixed(6) + ' - Driving Distance: ' + (d / 1609).toFixed(2) + ' miles';
+  var marker = new google.maps.Marker({
+    position: pt,
+    icon: redIcon8,
+    title: str
+  });
+  circleMarkers.push(marker);
+  marker.setMap(map);
+}
+function clearOverlays() {
+ for (var i=0; i<circleMarkers.length; i++) {
+   circleMarkers[i].setMap(null);
+ }
+ circleMarkers = [];
+ for (var i=0; i<circlePoints.length; i++) {
+   circlePoints[i].setMap(null);
+ }
+ circlePoints = [];
+/* for (var i=0; i<drivePolyPoints.length; i++) {
+   drivePolyPoints[i].setMap(null);
+ }
+ drivePolyPoints = [];
+*/
+ for (var i=0; i<polylines.length; i++) {
+   polylines[i].setMap(null);
+ }
+ polylines = [];
+ if (searchPolygon && searchPolygon.setMap) searchPolygon.setMap(null);
+ if (drivePolygon && drivePolygon.setMap)  drivePolygon.setMap(null);
+ if (centerMarker && centerMarker.setMap)  centerMarker.setMap(null);
+}
+//]]>
+    </script>
+
+  </head>
+  <body>
+<h2>Google Maps - Marcelo's Drive Time Polygon Example ported to v3</h2>
+
+<div style="margin:5px;border-bottom:1px dashed navy"></div>
+
+<center>
+<table cellspacing="5" cellpadding="10">
+	<tr>
+		<td valign="top">
+			<a href="#" onclick="clearOverlays();">Clear</a>&nbsp;|&nbsp;
+			<a href="#" onclick="pointInterval=30;clearOverlays();">interval 30 (default)</a>&nbsp;|&nbsp;
+			<a href="#" onclick="pointInterval=20;clearOverlays();">interval 20</a>&nbsp;|&nbsp;
+			<a href="#" onclick="pointInterval=10;clearOverlays();">interval 10</a>&nbsp;|&nbsp;
+			<a href="#" onclick="pointInterval=5;clearOverlays();">interval 5</a>&nbsp;|&nbsp;
+			<a href="#" onclick="pointInterval=1;clearOverlays();">interval 1</a>
+		</td>
+	</tr>
+	
+	<tr>
+		<td valign="top">
+			<div id="mapDiv" style="width: 800px; height: 500px"></div>
+		</td>
+		<td valign="top" style="width:200px;text-align:left;font:normal 12px verdana;">
+			Click on the map to place a marker.<br>
+			Routes up to 30 miles from the marker are calculated automatically.<br>
+			The blue circle has radius 30 miles.<br>
+			Fast in Firefox, slow in IE. (What a surprise!)<br><br>
+			The interval value means every how many degrees a point should be calculated on a circle around the center marker. (lower interval means more points and longer processing time)<br><br>
+		</td>
+	</tr>
+</table>
+<div id="status"></div>
+</center>
+<script type="text/javascript">
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-162157-1', 'auto');
+  ga('send', 'pageview');
+
+</script>
+</body>
+</html>
